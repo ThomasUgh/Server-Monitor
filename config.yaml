@@ -1,0 +1,207 @@
+# ============================================================
+#  Server Monitor – Beispiel-Konfiguration
+#  Datei: /etc/server-monitor/config.yaml
+# ============================================================
+
+# -------------------------------------------------------
+# 1. DISCORD WEBHOOK URL  (Pflichtfeld!)
+# -------------------------------------------------------
+# Erstelle einen Webhook in Discord:
+#   Kanal → Einstellungen → Integrationen → Webhook erstellen
+#   Die URL hat das Format: https://discord.com/api/webhooks/XXXXXX/YYYYYY
+discord_webhook_url: "https://discord.com/api/webhooks/DEINE_ID/DEIN_TOKEN"
+
+
+# -------------------------------------------------------
+# 2. UPDATE-INTERVALL
+# -------------------------------------------------------
+# Wie oft (in Sekunden) die Discord-Nachricht aktualisiert wird.
+# Empfehlung: 60 bis 300 Sekunden (1–5 Minuten)
+update_interval_seconds: 60
+
+# Wie oft Metriken intern gesammelt werden (für Zeitfenster-Auswertung).
+# Muss kleiner oder gleich update_interval_seconds sein.
+collect_interval_seconds: 30
+
+
+# -------------------------------------------------------
+# 3. EREIGNISSE & ANZEIGE
+# -------------------------------------------------------
+# Wie viele Ereignisse im Discord-Embed angezeigt werden.
+max_events_displayed: 10
+
+# Welche Ereignisse ins Embed übernommen werden:
+#   info     → alles (sehr viele Meldungen)
+#   warning  → Warnungen, Fehler und kritische Meldungen  ← Empfehlung
+#   error    → nur Fehler und kritisches
+#   critical → nur kritische Meldungen
+severity_mode: "warning"
+
+# Ab welcher Schwere sofort (ohne Wartezeit) aktualisiert wird:
+#   warning | error | critical
+immediate_update_severity: "error"
+
+
+# -------------------------------------------------------
+# 4. FESTPLATTEN / MOUNTPOINTS
+# -------------------------------------------------------
+# Welche Einhängepunkte überwacht werden sollen.
+# Leer lassen = automatische Erkennung aller physischer Partitionen.
+disk_mountpoints:
+  - "/"
+  # - "/data"
+  # - "/mnt/backup"
+
+
+# -------------------------------------------------------
+# 5. SCHWELLENWERTE
+# -------------------------------------------------------
+# Sofortalarm bei Disk oder Swap.
+# Zeitfenster-Alarm für CPU / RAM / I/O-Wait / Netzwerk.
+thresholds:
+  # CPU: Alarm, wenn die Auslastung durchschnittlich über diesem Wert lag:
+  cpu_percent: 85
+  cpu_duration_minutes: 10      # ... und das für diese Dauer gilt
+
+  # RAM:
+  ram_percent: 85
+  ram_duration_minutes: 10
+
+  # Festplatte (sofortiger Alarm, kein Zeitfenster):
+  disk_percent: 85
+
+  # Swap (sofortiger Alarm):
+  swap_percent: 80
+
+  # I/O-Wait (Festplatten-Auslastung des Systems):
+  iowait_percent: 25
+  iowait_duration_minutes: 5
+
+
+# -------------------------------------------------------
+# 6. NETZWERK-ÜBERWACHUNG
+# -------------------------------------------------------
+network:
+  # Welches Netzwerk-Interface überwacht wird.
+  # Typische Namen: eth0, ens18, ens3, enp0s3
+  interface: "eth0"
+
+  # Alarm, wenn der kombinierte Traffic (Senden + Empfangen)
+  # diesen Wert (in Mbit/s) überschreitet ...
+  threshold_mbits: 100
+
+  # ... und das für diese Dauer gilt:
+  duration_minutes: 10
+
+  # Auf false setzen, um die Netzwerk-Überwachung zu deaktivieren:
+  enabled: true
+
+
+# -------------------------------------------------------
+# 7. DIENSTE ÜBERWACHEN (systemd)
+# -------------------------------------------------------
+# Welche systemd-Dienste überwacht werden sollen.
+# Einfache Schreibweise: nur der Name des Dienstes
+# Erweiterte Schreibweise: Name + Einstellungen (siehe Beispiel)
+monitored_services:
+  - nginx
+  - postgresql
+  # Komplexere Schreibweise mit eigenen Einstellungen:
+  # - name: "gitlab-runner"
+  #   critical_on_failed: true
+  #   warn_on_inactive: false
+
+
+# -------------------------------------------------------
+# 8. JOURNAL / SYSTEMLOG
+# -------------------------------------------------------
+# journalctl-Integration für Fehlermeldungen aus dem System-Log.
+journal:
+  enabled: true
+
+  # Welche Log-Prioritäten gemeldet werden.
+  # Mögliche Werte: emerg, alert, crit, err, warning, notice, info, debug
+  priorities:
+    - "err"
+    - "crit"
+    - "alert"
+    - "emerg"
+
+  # Wie weit zurück (in Minuten) bei jedem Durchlauf gesucht wird.
+  lookback_minutes: 5
+
+  # OOM-Kill-Erkennung (Out-of-Memory – Prozesse die vom System beendet wurden):
+  oom_detection: true
+
+  # Diese Units aus der Überwachung ausschließen (Liste von systemd-Unit-Namen):
+  exclude_units:
+    # - "audit.service"
+
+  # Nur diese Units überwachen (leer = alle überwachen):
+  include_units: []
+
+
+# -------------------------------------------------------
+# 9. HTTP- UND PORT-CHECKS
+# -------------------------------------------------------
+# HTTP-Checks: Ist eine Webseite oder API erreichbar?
+http_checks:
+  # - url: "https://example.com"
+  #   name: "Meine Webseite"
+  #   expected_status: 200   # welcher HTTP-Status als "OK" gilt
+  #   timeout: 10             # Sekunden
+
+# Port-Checks: Ist ein bestimmter Port/Dienst erreichbar?
+port_checks:
+  # - host: "localhost"
+  #   port: 5432
+  #   name: "PostgreSQL"
+  #   timeout: 5
+
+
+# -------------------------------------------------------
+# 10. ZERTIFIKAT-CHECKS (TLS/HTTPS)
+# -------------------------------------------------------
+# Prüft, wann TLS-Zertifikate ablaufen.
+cert_checks:
+  # - host: "example.com"
+  #   port: 443
+  #   warning_days: 30    # Warnung ab 30 Tagen vor Ablauf
+  #   critical_days: 7    # Kritisch ab 7 Tagen vor Ablauf
+
+
+# -------------------------------------------------------
+# 11. DEDUPLIZIERUNG / COOLDOWNS
+# -------------------------------------------------------
+# Wie lange (in Minuten) nach einem Ereignis gewartet wird,
+# bevor dasselbe Ereignis erneut gemeldet wird.
+dedupe:
+  resource_cooldown_minutes: 15     # CPU / RAM / Disk / Netzwerk
+  service_cooldown_minutes: 5       # Dienst-Fehler
+  journal_cooldown_minutes: 5       # Journal-Einträge
+  check_cooldown_minutes: 5         # HTTP / Port / Zertifikat
+  reboot_cooldown_minutes: 120      # Host-Neustart-Meldung
+  monitor_restart_cooldown_minutes: 60  # Monitor-Neustart-Meldung
+
+
+# -------------------------------------------------------
+# 12. NEUSTART-ERKENNUNG
+# -------------------------------------------------------
+# Beim Host-Neustart ein Ereignis im Embed eintragen:
+notify_on_reboot: true
+
+# Beim unerwarteten Neustart des Monitors ein Ereignis eintragen:
+notify_on_monitor_restart: true
+
+
+# -------------------------------------------------------
+# 13. DATEIPFADE
+# -------------------------------------------------------
+# Wo der Zustand (Message-ID, letzte Ereignisse) gespeichert wird:
+state_file: "/var/lib/server-monitor/state.json"
+
+# Wo die Log-Datei geschrieben wird:
+log_file: "/var/log/server-monitor/monitor.log"
+
+# Log-Level: DEBUG | INFO | WARNING | ERROR
+log_level: "INFO"
