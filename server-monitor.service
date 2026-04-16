@@ -1,0 +1,44 @@
+[Unit]
+Description=Server Monitor – Linux Health & Event Monitoring with Discord Webhook
+After=network-online.target
+Wants=network-online.target
+# Restart after 10 seconds if the service crashes
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Run as a dedicated user (create with: useradd -r -s /bin/false server-monitor)
+# For quick testing you may use root, but a dedicated user is recommended:
+User=server-monitor
+Group=server-monitor
+
+# Path to the virtual environment's Python and the main script
+ExecStart=/opt/server-monitor/venv/bin/python /opt/server-monitor/main.py \
+    --config /etc/server-monitor/config.yaml
+
+WorkingDirectory=/opt/server-monitor
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Allow reading system information (required for psutil/journalctl)
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=20%
+
+# Logging to journal (in addition to file)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=server-monitor
+
+[Install]
+WantedBy=multi-user.target
