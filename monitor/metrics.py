@@ -25,6 +25,7 @@ class DiskInfo:
 @dataclass
 class SystemMetrics:
     cpu_percent: float
+    cpu_cores: int
     ram_used_gb: float
     ram_total_gb: float
     ram_percent: float
@@ -35,8 +36,10 @@ class SystemMetrics:
     iowait_percent: float
     load_avg: Tuple[float, float, float]
     uptime_seconds: float
-    net_mbits_sent: float   # current sample rate Mbit/s
+    net_mbits_sent: float       # current sample rate Mbit/s
     net_mbits_recv: float
+    net_total_sent_gb: float    # cumulative total since boot
+    net_total_recv_gb: float
     boot_time: float
 
 
@@ -95,6 +98,7 @@ class MetricsCollector:
 
         # CPU
         cpu_pct = psutil.cpu_percent(interval=None)
+        cpu_cores = psutil.cpu_count(logical=True) or 1
 
         # iowait
         cpu_times = psutil.cpu_times_percent(interval=None)
@@ -112,7 +116,7 @@ class MetricsCollector:
         disks = self._collect_disks()
 
         # Network
-        net_sent, net_recv = self._collect_network(now)
+        net_sent, net_recv, net_total_sent_gb, net_total_recv_gb = self._collect_network(now)
 
         # Load average
         try:
@@ -126,6 +130,7 @@ class MetricsCollector:
 
         metrics = SystemMetrics(
             cpu_percent=round(cpu_pct, 1),
+            cpu_cores=cpu_cores,
             ram_used_gb=round(ram_used_gb, 2),
             ram_total_gb=round(ram_total_gb, 2),
             ram_percent=round(vm.percent, 1),
@@ -138,6 +143,8 @@ class MetricsCollector:
             uptime_seconds=uptime,
             net_mbits_sent=net_sent,
             net_mbits_recv=net_recv,
+            net_total_sent_gb=net_total_sent_gb,
+            net_total_recv_gb=net_total_recv_gb,
             boot_time=boot_time,
         )
 
@@ -229,31 +236,33 @@ class MetricsCollector:
                 pass
         return disks
 
-    def _collect_network(self, now: float) -> Tuple[float, float]:
-        """Return (sent_mbit_s, recv_mbit_s) for configured interface."""
+    def _collect_network(self, now: float) -> Tuple[float, float, float, float]:
+        """Return (sent_mbit_s, recv_mbit_s, total_sent_gb, total_recv_gb)."""
         try:
             counters = psutil.net_io_counters(pernic=True)
             iface = self._net_cfg.interface
             if iface not in counters:
-                # Fallback: sum all non-loopback interfaces
                 totals = psutil.net_io_counters(pernic=False)
                 if totals is None:
-                    return 0.0, 0.0
+                    return 0.0, 0.0, 0.0, 0.0
                 sent = totals.bytes_sent
                 recv = totals.bytes_recv
             else:
                 sent = counters[iface].bytes_sent
                 recv = counters[iface].bytes_recv
 
+            total_sent_gb = round(sent / 1e9, 2)
+            total_recv_gb = round(recv / 1e9, 2)
+
             if self._prev_net_time is None or self._prev_net_bytes_sent is None:
                 self._prev_net_bytes_sent = sent
                 self._prev_net_bytes_recv = recv
                 self._prev_net_time = now
-                return 0.0, 0.0
+                return 0.0, 0.0, total_sent_gb, total_recv_gb
 
             dt = now - self._prev_net_time
             if dt <= 0:
-                return 0.0, 0.0
+                return 0.0, 0.0, total_sent_gb, total_recv_gb
 
             d_sent = max(0, sent - self._prev_net_bytes_sent)
             d_recv = max(0, recv - self._prev_net_bytes_recv)
@@ -265,9 +274,9 @@ class MetricsCollector:
             self._prev_net_bytes_recv = recv
             self._prev_net_time = now
 
-            return sent_mbit, recv_mbit
+            return sent_mbit, recv_mbit, total_sent_gb, total_recv_gb
         except Exception:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
 
     @staticmethod
     def _push(window: Deque[_WindowPoint], ts: float, value: float, max_minutes: float) -> None:
