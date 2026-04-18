@@ -84,7 +84,7 @@ class ServerMonitor:
         self._state.update_run_time()
 
         # Initial collect + push before entering the loop
-        self._do_collect()
+        self._do_collect(startup=True)
         self._do_discord_update(force=True)
 
         self._run_loop()
@@ -105,7 +105,7 @@ class ServerMonitor:
             now = time.time()
 
             if now - self._last_collect >= self._cfg.collect_interval_seconds:
-                self._do_collect()
+                self._do_collect(startup=False)
 
             if self._events.pending_immediate:
                 logger.debug("Immediate Discord update triggered by high-severity event")
@@ -120,7 +120,7 @@ class ServerMonitor:
     # Collection cycle
     # ------------------------------------------------------------------
 
-    def _do_collect(self) -> None:
+    def _do_collect(self, startup: bool = False) -> None:
         now = time.time()
         self._last_collect = now
 
@@ -136,8 +136,8 @@ class ServerMonitor:
             self._check_sustained_thresholds()
             self._check_instant_thresholds(self._current_metrics)
 
-        # 3. Journal events (every collect cycle)
-        self._collect_journal_events()
+        # 3. Journal events
+        self._collect_journal_events(startup=startup)
 
         # 4. Service checks (every 3 collect cycles ≈ 90s by default)
         if now - self._last_service_check >= self._cfg.collect_interval_seconds * 3:
@@ -149,7 +149,6 @@ class ServerMonitor:
             self._run_external_checks()
             self._last_external_check = now
 
-        # Save events to state periodically
         self._state.set_events(self._events.to_state())
 
     # ------------------------------------------------------------------
@@ -226,9 +225,9 @@ class ServerMonitor:
     # Journal
     # ------------------------------------------------------------------
 
-    def _collect_journal_events(self) -> None:
+    def _collect_journal_events(self, startup: bool = False) -> None:
         try:
-            entries, ooms = self._journal.collect_recent()
+            entries, ooms = self._journal.collect_recent(is_startup=startup)
         except Exception as exc:
             logger.error("Journal collection failed: %s", exc)
             return
