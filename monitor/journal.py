@@ -24,9 +24,6 @@ _OOM_RE = re.compile(r"(Out of memory:|oom_kill_process|oom-kill:)", re.IGNORECA
 _OOM_PROCESS_RE = re.compile(r"Killed process (\d+) \((.+?)\)", re.IGNORECASE)
 
 
-@dataclass_compat := None  # just to avoid importing dataclass here
-
-
 class JournalEntry:
     __slots__ = ("timestamp", "unit", "message", "priority", "pid")
 
@@ -62,15 +59,25 @@ class JournalCollector:
 
     # ------------------------------------------------------------------
 
-    def collect_recent(self) -> Tuple[List[JournalEntry], List[JournalEntry]]:
+    def collect_recent(self, is_startup: bool = False) -> Tuple[List[JournalEntry], List[JournalEntry]]:
         """
         Return (error_entries, oom_entries) from the last N minutes.
+        On startup, only entries >= lookback_min_priority are returned (if lookback_enabled).
+        During normal polling, uses a short 1-cycle window.
         """
         if not self._cfg.enabled or not self._available:
             return [], []
 
-        since = f"{self._cfg.lookback_minutes} minutes ago"
-        priority_arg = self._build_priority_filter()
+        if is_startup:
+            if not self._cfg.lookback_enabled:
+                return [], []
+            since = f"{self._cfg.lookback_minutes} minutes ago"
+            # Override priority to lookback minimum on startup
+            priority_arg = self._priority_number(self._cfg.lookback_min_priority)
+        else:
+            # Normal poll: only look back the collect interval window
+            since = "5 minutes ago"
+            priority_arg = self._build_priority_filter()
 
         cmd = [
             "journalctl",
@@ -99,25 +106,40 @@ class JournalCollector:
             return [], []
 
         entries, ooms = self._parse_output(result.stdout)
+
+        # On startup: additionally filter by lookback_min_priority level
+        if is_startup:
+            min_level = self._severity_level(self._cfg.lookback_min_priority)
+            entries = [e for e in entries if self._severity_level(e.priority) >= min_level]
+            ooms    = [o for o in ooms    if self._severity_level(o.priority) >= min_level]
+
         return entries, ooms
 
     # ------------------------------------------------------------------
 
     def _build_priority_filter(self) -> str:
         """Build the journalctl --priority argument from configured list."""
-        _prio_numbers = {
-            "emerg": "0", "alert": "1", "crit": "2", "err": "3",
-            "warning": "4", "notice": "5", "info": "6", "debug": "7",
+        nums = [n for p in self._cfg.priorities if (n := self._PRIO_NUMBERS.get(p.lower()))]
+        return max(nums) if nums else "3"
+
+    def _priority_number(self, name: str) -> str:
+        """Convert severity name (error/warning/critical/info) to journalctl priority number."""
+        _map = {
+            "critical": "2",   # crit and above
+            "error":    "3",   # err and above
+            "warning":  "4",   # warning and above
+            "info":     "6",   # info and above
         }
-        nums = []
-        for p in self._cfg.priorities:
-            n = _prio_numbers.get(p.lower())
-            if n:
-                nums.append(n)
-        if not nums:
-            return "3"
-        # journalctl accepts highest priority number (most verbose) in the range
-        return max(nums)
+        return _map.get(name.lower(), "3")
+
+    @staticmethod
+    def _severity_level(name: str) -> int:
+        return {"info": 0, "warning": 1, "error": 2, "critical": 3}.get(name.lower(), 0)
+
+    _PRIO_NUMBERS = {
+        "emerg": "0", "alert": "1", "crit": "2", "err": "3",
+        "warning": "4", "notice": "5", "info": "6", "debug": "7",
+    }
 
     # ------------------------------------------------------------------
 
