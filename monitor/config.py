@@ -68,7 +68,9 @@ class PortCheckConfig:
 class JournalConfig:
     enabled: bool = True
     priorities: List[str] = field(default_factory=lambda: ["err", "crit", "alert", "emerg"])
-    lookback_minutes: int = 5
+    lookback_minutes: int = 60
+    lookback_enabled: bool = True
+    lookback_min_priority: str = "error"   # info | warning | error | critical – only this+ shown on startup
     exclude_units: List[str] = field(default_factory=list)
     include_units: List[str] = field(default_factory=list)
     oom_detection: bool = True
@@ -231,7 +233,9 @@ def load_config(path: str) -> Config:
         cfg.journal = JournalConfig(
             enabled=j.get("enabled", True),
             priorities=j.get("priorities", ["err", "crit", "alert", "emerg"]),
-            lookback_minutes=j.get("lookback_minutes", 5),
+            lookback_minutes=j.get("lookback_minutes", 60),
+            lookback_enabled=j.get("lookback_enabled", True),
+            lookback_min_priority=j.get("lookback_min_priority", "error"),
             exclude_units=j.get("exclude_units", []),
             include_units=j.get("include_units", []),
             oom_detection=j.get("oom_detection", True),
