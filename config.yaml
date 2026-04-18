@@ -119,25 +119,35 @@ monitored_services:
 journal:
   enabled: true
 
-  # Welche Log-Prioritäten gemeldet werden.
-  # Mögliche Werte: emerg, alert, crit, err, warning, notice, info, debug
+  # Welche Log-Prioritäten während des laufenden Betriebs gemeldet werden.
   priorities:
     - "err"
     - "crit"
     - "alert"
     - "emerg"
 
-  # Wie weit zurück (in Minuten) bei jedem Durchlauf gesucht wird.
-  lookback_minutes: 5
+  # ── Lookback beim Start ────────────────────────────────────────
+  # Beim Start des Monitors einmalig rückwirkend ins Journal schauen.
+  # Nützlich um Fehler der letzten Stunde nicht zu verpassen.
+  lookback_enabled: true
 
-  # OOM-Kill-Erkennung (Out-of-Memory – Prozesse die vom System beendet wurden):
+  # Wie weit zurückgeschaut wird (in Minuten):
+  lookback_minutes: 60
+
+  # Mindest-Schwere für den Lookback beim Start.
+  # Nur Einträge ab dieser Schwere werden beim Start eingelesen.
+  # Optionen: info | warning | error | critical
+  # Empfehlung: "error" – so kommen nur echte Fehler, kein Info-Spam
+  lookback_min_priority: "error"
+
+  # OOM-Kill-Erkennung:
   oom_detection: true
 
-  # Diese Units aus der Überwachung ausschließen (Liste von systemd-Unit-Namen):
+  # Diese Units aus der Überwachung ausschließen:
   exclude_units:
     # - "audit.service"
 
-  # Nur diese Units überwachen (leer = alle überwachen):
+  # Nur diese Units überwachen (leer = alle):
   include_units: []
 
 
