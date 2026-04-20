@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import socket
-import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -20,9 +19,11 @@ _COLOR = {
     "critical": 0xED4245,
     "unknown":  0x95A5A6,
 }
-
-_STATUS_ICON = {"healthy": "✅", "warning": "⚠️", "critical": "🚨"}
+_STATUS_ICON  = {"healthy": "✅", "warning": "⚠️", "critical": "🚨"}
 _STATUS_LABEL = {"healthy": "Healthy", "warning": "Warning", "critical": "Critical"}
+
+# Horizontal rule separator (Discord renders this as a visible line via field name)
+_HR  = {"name": "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯", "value": "\u200b", "inline": False}
 _SEP = {"name": "\u200b", "value": "\u200b", "inline": False}
 
 
@@ -30,15 +31,16 @@ def _now_berlin() -> str:
     return datetime.now(_TZ_BERLIN).strftime("%d.%m.%Y %H:%M:%S")
 
 
-def _bar(percent: float, width: int = 8) -> str:
+def _bar(percent: float, width: int = 10) -> str:
+    """Compact progress bar."""
     filled = max(0, min(width, round(percent / 100 * width)))
-    return "█" * filled + "░" * (width - filled)
+    return "▰" * filled + "▱" * (width - filled)
 
 
-def _disk_emoji(percent: float, threshold: float) -> str:
-    if percent >= 95:        return "🔴"
-    if percent >= threshold: return "🟠"
-    if percent >= threshold * 0.8: return "🟡"
+def _pct_emoji(percent: float, warn: float, crit: float = 95.0) -> str:
+    if percent >= crit:   return "🔴"
+    if percent >= warn:   return "🟠"
+    if percent >= warn * 0.8: return "🟡"
     return "🟢"
 
 
@@ -49,13 +51,14 @@ class EmbedBuilder:
 
     def build(
         self,
-        metrics,
-        events,
-        service_statuses,
+        metrics: Optional[SystemMetrics],
+        events: List[Event],
+        service_statuses: List[ServiceStatus],
         overall_status: str,
     ) -> Dict[str, Any]:
-        color  = _COLOR.get(overall_status, _COLOR["unknown"])
-        hostname = socket.gethostname()
+
+        color        = _COLOR.get(overall_status, _COLOR["unknown"])
+        hostname     = socket.gethostname()
         status_icon  = _STATUS_ICON.get(overall_status, "❔")
         status_label = _STATUS_LABEL.get(overall_status, overall_status.title())
 
@@ -63,57 +66,84 @@ class EmbedBuilder:
         if metrics:
             fields += self._system_fields(metrics)
         if service_statuses:
-            fields.append(_SEP)
+            fields.append(_HR)
             fields.append(self._service_field(service_statuses))
-        fields.append(_SEP)
+        fields.append(_HR)
         fields.append(self._event_field(events))
 
         return {"embeds": [{
             "title": f"🖥️  {hostname}   {status_icon} {status_label}",
             "color": color,
             "fields": fields,
-            "footer": {"text": f"🔄 Zuletzt aktualisiert: {_now_berlin()}"},
+            "footer": {"text": f"🔄 Aktualisiert: {_now_berlin()} (Europe/Berlin)"},
         }]}
 
     # ------------------------------------------------------------------
-    def _system_fields(self, m) -> List[Dict]:
+    # Metric fields
+    # ------------------------------------------------------------------
+
+    def _system_fields(self, m: SystemMetrics) -> List[Dict]:
         fields = []
-        thresh = self._cfg.thresholds
+        thresh  = self._cfg.thresholds
 
         # CPU
+        cpu_e = _pct_emoji(m.cpu_percent, thresh.cpu_percent)
         fields.append({
-            "name": "💻  CPU",
-            "value": f"**{m.cpu_percent}%** `{_bar(m.cpu_percent)}`\n`{m.cpu_cores}` Kerne",
+            "name": f"{cpu_e}  CPU",
+            "value": (
+                f"**{m.cpu_percent}%**\n"
+                f"`{_bar(m.cpu_percent)}`\n"
+                f"{m.cpu_cores} Kerne"
+            ),
             "inline": True,
         })
 
         # RAM
+        ram_e = _pct_emoji(m.ram_percent, thresh.ram_percent)
         fields.append({
-            "name": "🧠  RAM",
-            "value": f"**{m.ram_percent}%** `{_bar(m.ram_percent)}`\n{m.ram_used_gb:.1f} / {m.ram_total_gb:.1f} GB",
+            "name": f"{ram_e}  RAM",
+            "value": (
+                f"**{m.ram_percent}%**\n"
+                f"`{_bar(m.ram_percent)}`\n"
+                f"{m.ram_used_gb:.1f} / {m.ram_total_gb:.1f} GB"
+            ),
             "inline": True,
         })
 
-        # Swap
+        # Swap (nur wenn vorhanden)
         if m.swap_total_gb > 0.1:
+            sw_e = _pct_emoji(m.swap_percent, thresh.swap_percent)
             fields.append({
-                "name": "💾  Swap",
-                "value": f"**{m.swap_percent}%** `{_bar(m.swap_percent)}`\n{m.swap_used_gb:.1f} / {m.swap_total_gb:.1f} GB",
+                "name": f"{sw_e}  Swap",
+                "value": (
+                    f"**{m.swap_percent}%**\n"
+                    f"`{_bar(m.swap_percent)}`\n"
+                    f"{m.swap_used_gb:.1f} / {m.swap_total_gb:.1f} GB"
+                ),
                 "inline": True,
             })
 
         # Disks
         for disk in m.disks[:4]:
+            d_e = _pct_emoji(disk.percent, thresh.disk_percent)
             fields.append({
-                "name": f"{_disk_emoji(disk.percent, thresh.disk_percent)}  Disk `{disk.mountpoint}`",
-                "value": f"**{disk.percent}%** `{_bar(disk.percent)}`\n{disk.used_gb:.0f} / {disk.total_gb:.0f} GB",
+                "name": f"{d_e}  Disk `{disk.mountpoint}`",
+                "value": (
+                    f"**{disk.percent}%**\n"
+                    f"`{_bar(disk.percent)}`\n"
+                    f"{disk.used_gb:.0f} / {disk.total_gb:.0f} GB"
+                ),
                 "inline": True,
             })
 
         # I/O Wait
+        iow_e = _pct_emoji(m.iowait_percent, thresh.iowait_percent)
         fields.append({
-            "name": "⚡  I/O Wait",
-            "value": f"**{m.iowait_percent}%** `{_bar(m.iowait_percent)}`",
+            "name": f"{iow_e}  I/O Wait",
+            "value": (
+                f"**{m.iowait_percent}%**\n"
+                f"`{_bar(m.iowait_percent)}`"
+            ),
             "inline": True,
         })
 
@@ -125,14 +155,15 @@ class EmbedBuilder:
             "inline": True,
         })
 
-        # Network
+        # Netzwerk
         if self._cfg.network.enabled:
             iface = self._cfg.network.interface
             fields.append({
                 "name": f"🌐  Netz `{iface}`",
                 "value": (
-                    f"↑ **{m.net_mbits_sent}** Mbit/s  ↓ **{m.net_mbits_recv}** Mbit/s\n"
-                    f"Gesamt ↑ {m.net_total_sent_gb} GB  ↓ {m.net_total_recv_gb} GB"
+                    f"↑ **{m.net_mbits_sent}** Mbit/s\n"
+                    f"↓ **{m.net_mbits_recv}** Mbit/s\n"
+                    f"↑ {m.net_total_sent_gb} GB  ↓ {m.net_total_recv_gb} GB gesamt"
                 ),
                 "inline": True,
             })
@@ -147,15 +178,18 @@ class EmbedBuilder:
         return fields
 
     # ------------------------------------------------------------------
-    def _service_field(self, statuses) -> Dict:
+    # Service field
+    # ------------------------------------------------------------------
+
+    def _service_field(self, statuses: List[ServiceStatus]) -> Dict:
         lines = []
         for s in statuses:
-            if s.active_state == "active":         icon = "🟢"
-            elif s.severity == "critical":          icon = "🔴"
-            elif s.severity == "warning":           icon = "🟡"
-            else:                                   icon = "⚪"
+            if s.active_state == "active":    icon = "🟢"
+            elif s.severity == "critical":    icon = "🔴"
+            elif s.severity == "warning":     icon = "🟡"
+            else:                             icon = "⚪"
             sub = s.sub_state if s.sub_state not in ("unknown", "") else s.active_state
-            lines.append(f"{icon} `{s.name}` — {sub}")
+            lines.append(f"{icon}  `{s.name}` — {sub}")
         return {
             "name": "🔧  Services",
             "value": truncate("\n".join(lines) or "_Keine Services konfiguriert_", 1020),
@@ -163,13 +197,21 @@ class EmbedBuilder:
         }
 
     # ------------------------------------------------------------------
-    def _event_field(self, events) -> Dict:
+    # Event field
+    # ------------------------------------------------------------------
+
+    def _event_field(self, events: List[Event]) -> Dict:
         if not events:
-            return {"name": "📋  Ereignisse", "value": "_Keine aktuellen Ereignisse_", "inline": False}
+            return {
+                "name": "📋  Ereignisse",
+                "value": "_Keine aktuellen Ereignisse_",
+                "inline": False,
+            }
         lines = []
         for e in events:
-            ts = datetime.fromtimestamp(e.timestamp, tz=_TZ_BERLIN).strftime("%d.%m %H:%M")
-            lines.append(f"`{ts}` {severity_emoji(e.severity)} {truncate(e.title, 80)}")
+            ts    = datetime.fromtimestamp(e.timestamp, tz=_TZ_BERLIN).strftime("%d.%m %H:%M")
+            emoji = severity_emoji(e.severity)
+            lines.append(f"`{ts}`  {emoji}  {truncate(e.title, 75)}")
         return {
             "name": f"📋  Ereignisse — letzte {len(events)}",
             "value": truncate("\n".join(lines), 1020),
