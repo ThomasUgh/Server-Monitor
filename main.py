@@ -353,9 +353,13 @@ class ServerMonitor:
 
         # HTTP
         for result in self._checks.run_http_checks():
-            if result.ok:
-                continue
             key = f"http:{result.url}"
+            if result.ok:
+                # Recovered – remove stale event
+                if self._events.remove_by_key(key):
+                    self._state.clear_cooldown(key)
+                    logger.info("HTTP check recovered: %s", result.name)
+                continue
             if self._state.is_on_cooldown(key, cooldown):
                 continue
             event = Event(
@@ -369,9 +373,12 @@ class ServerMonitor:
 
         # Port
         for result in self._checks.run_port_checks():
-            if result.ok:
-                continue
             key = f"port:{result.host}:{result.port}"
+            if result.ok:
+                if self._events.remove_by_key(key):
+                    self._state.clear_cooldown(key)
+                    logger.info("Port check recovered: %s", result.name)
+                continue
             if self._state.is_on_cooldown(key, cooldown):
                 continue
             event = Event(
@@ -412,10 +419,13 @@ class ServerMonitor:
                 severity = "warning"
                 title = f"Zertifikat läuft in {result.days_remaining} Tagen ab: {result.host}"
             else:
+                # Cert is fine – remove any stale cert error event
+                self._events.remove_by_key(f"cert_error:{result.host}")
+                self._events.remove_by_key_prefix(f"cert:{result.host}:")
                 continue
 
             key = f"cert:{result.host}:{result.days_remaining // 7}"
-            if not self._state.is_on_cooldown(key, cooldown * 6):  # longer cooldown for certs
+            if not self._state.is_on_cooldown(key, cooldown * 6):
                 event = Event(
                     timestamp=time.time(),
                     severity=severity,
@@ -441,27 +451,25 @@ class ServerMonitor:
         now = time.time()
 
         # -- Host reboot detection --
-        if self._cfg.notify_on_reboot and current_boot is not None:
-            if saved_boot is None:
-                # First run ever – just record boot time
-                pass
-            elif abs(current_boot - saved_boot) > 30:
-                # Boot time changed → reboot
-                key = f"host_reboot:{int(current_boot)}"
-                cooldown = self._cfg.dedupe.reboot_cooldown_minutes
-                if not self._state.is_on_cooldown(key, cooldown):
-                    boot_str = datetime.fromtimestamp(current_boot).strftime("%d.%m.%Y %H:%M")
-                    event = Event(
-                        timestamp=now,
-                        severity="info",
-                        key=key,
-                        title=f"🔁 Host wurde neu gestartet (Boot: {boot_str})",
-                    )
-                    self._events.add(event)
-                    self._state.set_cooldown(key)
-                    logger.info("Host reboot detected (boot_time changed)")
+        if current_boot is not None:
+            if self._cfg.notify_on_reboot and saved_boot is not None:
+                if abs(current_boot - saved_boot) > 30:
+                    # Boot time changed → reboot
+                    key = f"host_reboot:{int(current_boot)}"
+                    cooldown = self._cfg.dedupe.reboot_cooldown_minutes
+                    if not self._state.is_on_cooldown(key, cooldown):
+                        boot_str = datetime.fromtimestamp(current_boot).strftime("%d.%m.%Y %H:%M")
+                        event = Event(
+                            timestamp=now,
+                            severity="warning",
+                            key=key,
+                            title=f"🔁 Host wurde neu gestartet (Boot: {boot_str})",
+                        )
+                        self._events.add(event)
+                        self._state.set_cooldown(key)
+                        logger.info("Host reboot detected (boot_time changed)")
 
-            # Always update saved boot time
+            # Always save current boot time so next reboot can be detected
             self._state.last_boot_time = current_boot
 
         # -- Monitor restart / unexpected stop detection --
@@ -475,7 +483,7 @@ class ServerMonitor:
                 if not self._state.is_on_cooldown(key, cooldown):
                     event = Event(
                         timestamp=now,
-                        severity="info",
+                        severity="warning",
                         key=key,
                         title=f"🔄 Monitor-Dienst neu gestartet (Pause: {gap_minutes:.0f} Min.)",
                     )
