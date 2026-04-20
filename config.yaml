@@ -30,6 +30,11 @@ collect_interval_seconds: 30
 # Wie viele Ereignisse im Discord-Embed angezeigt werden.
 max_events_displayed: 10
 
+# Nach wie vielen Minuten ein Ereignis automatisch aus dem Embed verschwindet.
+# 0 = Ereignisse bleiben unbegrenzt (nicht empfohlen).
+# Empfehlung: 120 (2 Stunden)
+event_ttl_minutes: 120
+
 # Welche Ereignisse ins Embed übernommen werden:
 #   info     → alles (sehr viele Meldungen)
 #   warning  → Warnungen, Fehler und kritische Meldungen  ← Empfehlung

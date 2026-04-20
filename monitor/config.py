@@ -97,8 +97,9 @@ class Config:
 
     # Display
     max_events_displayed: int = 10
-    severity_mode: str = "warning"          # info | warning | error | critical
-    immediate_update_severity: str = "error"  # severity that triggers instant embed update
+    severity_mode: str = "warning"
+    immediate_update_severity: str = "error"
+    event_ttl_minutes: int = 120        # Events älter als X Minuten werden entfernt (0 = nie)
 
     # Monitored disk mountpoints (auto-detect if empty)
     disk_mountpoints: List[str] = field(default_factory=list)
@@ -194,6 +195,7 @@ def load_config(path: str) -> Config:
     for key in (
         "discord_webhook_url", "update_interval_seconds", "collect_interval_seconds",
         "max_events_displayed", "severity_mode", "immediate_update_severity",
+        "event_ttl_minutes",
         "state_file", "log_file", "log_level",
         "notify_on_reboot", "notify_on_monitor_restart", "docker_monitoring",
     ):
