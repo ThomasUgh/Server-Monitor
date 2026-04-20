@@ -1,8 +1,8 @@
-"""Event management: creation, deduplication, severity filtering, storage."""
+"""Event management: creation, deduplication, severity filtering, TTL expiry."""
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import List, Optional
 
 from monitor.utils import severity_level
@@ -35,26 +35,27 @@ class Event:
 
 
 class EventManager:
-    """Central event queue with deduplication and severity filtering."""
+    """Central event queue with deduplication, severity filtering and TTL expiry."""
 
     def __init__(self, config) -> None:
         self._config = config
         self._min_level: int = severity_level(config.severity_mode)
         self._events: List[Event] = []
-        # pending_immediate: True if an event since last Discord update needs
-        # an immediate push (based on immediate_update_severity).
         self.pending_immediate: bool = False
         self._immediate_level: int = severity_level(config.immediate_update_severity)
 
     # ------------------------------------------------------------------
-    # Loading / saving from state
+    # Loading / saving
     # ------------------------------------------------------------------
 
     def load_from_state(self, raw: List[dict]) -> None:
         self._events = []
         for d in raw:
             try:
-                self._events.append(Event.from_dict(d))
+                e = Event.from_dict(d)
+                # Don't restore already-expired events
+                if not self._is_expired(e):
+                    self._events.append(e)
             except Exception:
                 pass
 
@@ -66,46 +67,70 @@ class EventManager:
     # ------------------------------------------------------------------
 
     def add(self, event: Event) -> bool:
-        """
-        Add an event to the queue.
-        Returns True if the event was accepted (passes severity filter).
-        The caller is responsible for cooldown checks via StateManager.
-        """
+        """Add event. Replaces any existing event with the same key (no duplicates)."""
         if event.level < self._min_level:
             return False
+
+        # Remove existing event with same key to avoid duplicates
+        self._events = [e for e in self._events if e.key != event.key]
 
         self._events.append(event)
         self._events.sort(key=lambda e: e.timestamp, reverse=True)
 
-        # Trim to a reasonable internal buffer (3× display max to handle filtering)
         max_buf = max(self._config.max_events_displayed * 3, 50)
         if len(self._events) > max_buf:
             self._events = self._events[:max_buf]
 
-        # Mark for immediate Discord update?
         if event.level >= self._immediate_level:
             self.pending_immediate = True
 
         return True
+
+    def remove_by_key_prefix(self, prefix: str) -> int:
+        """Remove all events whose key starts with *prefix*. Returns count removed."""
+        before = len(self._events)
+        self._events = [e for e in self._events if not e.key.startswith(prefix)]
+        return before - len(self._events)
+
+    def remove_by_key(self, key: str) -> bool:
+        """Remove a specific event by exact key. Returns True if found."""
+        before = len(self._events)
+        self._events = [e for e in self._events if e.key != key]
+        return len(self._events) < before
+
+    # ------------------------------------------------------------------
+    # TTL expiry
+    # ------------------------------------------------------------------
+
+    def _is_expired(self, event: Event) -> bool:
+        ttl = getattr(self._config, "event_ttl_minutes", 120)
+        if ttl <= 0:
+            return False  # TTL disabled
+        return (time.time() - event.timestamp) > ttl * 60
+
+    def expire_old_events(self) -> int:
+        """Remove events older than event_ttl_minutes. Returns count removed."""
+        before = len(self._events)
+        self._events = [e for e in self._events if not self._is_expired(e)]
+        return before - len(self._events)
 
     # ------------------------------------------------------------------
     # Querying
     # ------------------------------------------------------------------
 
     def get_display_events(self) -> List[Event]:
-        """Return the most recent N events for embed display."""
-        return self._events[: self._config.max_events_displayed]
+        """Return the most recent N non-expired events for embed display."""
+        live = [e for e in self._events if not self._is_expired(e)]
+        return live[: self._config.max_events_displayed]
 
     def clear_pending_immediate(self) -> None:
         self.pending_immediate = False
 
     def overall_status(self) -> str:
-        """
-        Derive overall server status from recent events.
-        Uses only events from the last 30 minutes for status determination.
-        """
+        """Derive overall status from recent non-expired events."""
         cutoff = time.time() - 30 * 60
-        recent = [e for e in self._events if e.timestamp >= cutoff]
+        recent = [e for e in self._events
+                  if e.timestamp >= cutoff and not self._is_expired(e)]
         if not recent:
             return "healthy"
         max_level = max(e.level for e in recent)

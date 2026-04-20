@@ -135,6 +135,7 @@ class ServerMonitor:
         if self._current_metrics:
             self._check_sustained_thresholds()
             self._check_instant_thresholds(self._current_metrics)
+            self._resolve_recovered_resources(self._current_metrics)
 
         # 3. Journal events
         self._collect_journal_events(startup=startup)
@@ -148,6 +149,11 @@ class ServerMonitor:
         if now - self._last_external_check >= self._cfg.collect_interval_seconds * 5:
             self._run_external_checks()
             self._last_external_check = now
+
+        # 6. TTL expiry – remove old events
+        removed = self._events.expire_old_events()
+        if removed:
+            logger.debug("Expired %d old event(s)", removed)
 
         self._state.set_events(self._events.to_state())
 
@@ -183,6 +189,46 @@ class ServerMonitor:
             if self._events.add(event):
                 self._state.set_cooldown(alert.key)
                 logger.info("Sustained threshold event: %s", title)
+
+    def _resolve_recovered_resources(self, m: SystemMetrics) -> None:
+        """Remove resource events when the problem is no longer present."""
+        thresh = self._cfg.thresholds
+
+        # Disk – remove event when usage drops back below threshold
+        for disk in m.disks:
+            if disk.percent < thresh.disk_percent:
+                key = f"disk_full:{disk.mountpoint}"
+                if self._events.remove_by_key(key):
+                    self._state.clear_cooldown(key)
+                    logger.info("Disk %s recovered (%.1f%%)", disk.mountpoint, disk.percent)
+
+        # Swap
+        if m.swap_total_gb > 0.1 and m.swap_percent < thresh.swap_percent:
+            if self._events.remove_by_key("swap_high"):
+                self._state.clear_cooldown("swap_high")
+
+        # CPU – resolved when clearly back below threshold (75% of limit)
+        if m.cpu_percent < thresh.cpu_percent * 0.75:
+            if self._events.remove_by_key("sustained_cpu"):
+                self._state.clear_cooldown("sustained_cpu")
+                logger.info("CPU load recovered (%.1f%%)", m.cpu_percent)
+
+        # RAM
+        if m.ram_percent < thresh.ram_percent * 0.75:
+            if self._events.remove_by_key("sustained_ram"):
+                self._state.clear_cooldown("sustained_ram")
+                logger.info("RAM load recovered (%.1f%%)", m.ram_percent)
+
+        # I/O Wait
+        if m.iowait_percent < thresh.iowait_percent * 0.75:
+            if self._events.remove_by_key("sustained_iowait"):
+                self._state.clear_cooldown("sustained_iowait")
+
+        # Network
+        net_key = f"sustained_net_{self._cfg.network.interface}"
+        if (m.net_mbits_sent + m.net_mbits_recv) < self._cfg.network.threshold_mbits * 0.75:
+            if self._events.remove_by_key(net_key):
+                self._state.clear_cooldown(net_key)
 
     def _check_instant_thresholds(self, m: SystemMetrics) -> None:
         """Instant (non-sustained) checks for disk and swap."""
@@ -277,7 +323,14 @@ class ServerMonitor:
 
         for s in statuses:
             if s.ok:
+                # Service recovered – remove any stale failure events for it
+                removed = self._events.remove_by_key_prefix(f"service:{s.name}:")
+                if removed:
+                    logger.info("Service %s recovered – removed %d stale event(s)", s.name, removed)
+                    self._state.clear_cooldown(f"service:{s.name}:failed")
+                    self._state.clear_cooldown(f"service:{s.name}:inactive")
                 continue
+
             key = f"service:{s.name}:{s.active_state}"
             if self._state.is_on_cooldown(key, cooldown):
                 continue
