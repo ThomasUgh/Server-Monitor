@@ -157,12 +157,16 @@ disk_mountpoints:
   - "/data"    # Weitere Partitionen ergänzen
 ```
 
-### Ereignisse
+### Ereignisse – wann verschwinden sie?
 
 ```yaml
-max_events_displayed: 10
-severity_mode: "warning"     # info | warning | error | critical
+event_ttl_minutes: 120   # Ereignisse älter als 2 Stunden werden automatisch entfernt
+                         # 0 = nie entfernen
 ```
+
+Zusätzlich werden Ereignisse **sofort entfernt** wenn der Auslöser behoben ist:
+- Ein Service der wieder `active` ist → sein Fehler-Ereignis verschwindet direkt
+- Ressourcen (CPU/RAM/Disk) → verschwinden nach Ablauf der TTL
 
 ### Journal-Lookback beim Start
 
