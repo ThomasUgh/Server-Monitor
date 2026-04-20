@@ -1,4 +1,3 @@
-# Server Monitor – Benutzerhandbuch
 # Server Monitor
 
 Überwacht deinen Linux-Server dauerhaft und zeigt den aktuellen Zustand in **einer einzigen Discord-Nachricht**, die regelmäßig aktualisiert wird. Bei Fehlern oder Problemen wird sofort gemeldet.
