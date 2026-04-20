@@ -49,15 +49,18 @@ class EventManager:
     # ------------------------------------------------------------------
 
     def load_from_state(self, raw: List[dict]) -> None:
-        self._events = []
+        seen_keys: dict = {}
         for d in raw:
             try:
                 e = Event.from_dict(d)
-                # Don't restore already-expired events
-                if not self._is_expired(e):
-                    self._events.append(e)
+                if self._is_expired(e):
+                    continue
+                # Keep only the newest event per key
+                if e.key not in seen_keys or e.timestamp > seen_keys[e.key].timestamp:
+                    seen_keys[e.key] = e
             except Exception:
                 pass
+        self._events = sorted(seen_keys.values(), key=lambda e: e.timestamp, reverse=True)
 
     def to_state(self) -> List[dict]:
         return [e.to_dict() for e in self._events]
@@ -109,9 +112,16 @@ class EventManager:
         return (time.time() - event.timestamp) > ttl * 60
 
     def expire_old_events(self) -> int:
-        """Remove events older than event_ttl_minutes. Returns count removed."""
+        """Remove expired events and deduplicate by key. Returns count removed."""
         before = len(self._events)
-        self._events = [e for e in self._events if not self._is_expired(e)]
+        # Remove expired
+        live = [e for e in self._events if not self._is_expired(e)]
+        # Deduplicate: keep newest per key
+        seen: dict = {}
+        for e in live:
+            if e.key not in seen or e.timestamp > seen[e.key].timestamp:
+                seen[e.key] = e
+        self._events = sorted(seen.values(), key=lambda e: e.timestamp, reverse=True)
         return before - len(self._events)
 
     # ------------------------------------------------------------------
